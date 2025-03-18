@@ -1,0 +1,39 @@
+{
+    "name": "traw/luxletter-receiver-import",
+    "description": "Luxletter Receiver Import",
+    "type": "typo3-cms-extension",
+    "authors": [
+        {
+            "name": "Andreas Nedbal",
+            "role": "Developer"
+        },
+        {
+            "name": "Christine Zoglmeier",
+            "role": "Developer"
+        },
+        {
+            "name": "Oliver Eglseder",
+            "role": "Developer"
+        },
+        {
+            "name": "Julian Hofmann",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "georgringer/news": ">=11.4.1",
+        "in2code/luxletter": ">=26.1.0",
+        "shuchkin/simplexlsx": "~1.0.0",
+        "typo3/cms-core": "^12.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "TRAW\\LuxletterReceiverImport\\": "Classes"
+        }
+    },
+    "extra": {
+        "typo3/cms": {
+            "extension-key": "luxletter_receiver_import"
+        }
+    }
+}

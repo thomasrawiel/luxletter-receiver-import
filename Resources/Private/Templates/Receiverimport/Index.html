@@ -1,0 +1,68 @@
+<html xmlns:f="http://typo3.org/ns/TYPO3/CMS/Fluid/ViewHelpers" data-namespace-typo3-fluid="true">
+<f:layout name="Module" />
+
+<f:section name="Content">
+  <f:be.pageRenderer
+     pageTitle="Receiver Import"
+     includeCssFiles="{0:'EXT:luxletter/Resources/Public/Css/Modules.min.css'}"
+  />
+  <div class="lux-backend module-body">
+    <div class="row">
+        <div class="col-xs-12 col-md-6 col-lg-4 col-xl-3">
+            <f:if condition="{importSuccess}">
+                <f:then>
+                    <f:be.infobox title="Success" state="0">Your data is successfully imported.</f:be.infobox>
+                </f:then>
+                <f:else>
+                    <f:form method="POST" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <label for="titleColumn">Title Column</label>
+                            <f:if condition="{errors.titleColumn}">
+                                <f:be.infobox title="Incorrect Value" state="2">{errors.titleColumn}</f:be.infobox>
+                            </f:if>
+                            <f:form.textfield id="titleColumn" name="titleColumn" class="form-control" required="required" value="{data.titleColumn}"/>
+                            <small id="titleColumnHelp" class="form-text text-muted">In which column is the title of the group? (Number)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="emailColumn">Email Column</label>
+                            <f:if condition="{errors.emailColumn}">
+                                <f:be.infobox title="Incorrect Value" state="2">{errors.emailColumn}</f:be.infobox>
+                            </f:if>
+                            <f:form.textfield id="emailColumn" name="emailColumn" class="form-control" required="required" value="{data.emailColumn}" />
+                            <small id="emailColumnHelp" class="form-text text-muted">In which column is the email of the group? (Number)</small>
+                        </div>
+                        <div class="form-group">
+                            <div class="form-check">
+                                <f:form.checkbox id="hasTitleRow" class="form-check-input" value="1" name="hasTitleRow" />
+                                <label class="form-check-label" for="hasTitleRow">
+                                    Is there a title row which should not be imported?
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="importPid">Import PID</label>
+                            <f:if condition="{errors.emailColumn}">
+                                <f:be.infobox title="Incorrect Value" state="2">{errors.emailColumn}</f:be.infobox>
+                            </f:if>
+                            <f:form.textfield name="importPid" class="form-control" required="required" value="{data.importPid}" />
+                            <small id="importPidHelp" class="form-text text-muted">In which PID should the groups be imported?</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="importFile">Import File</label>
+                            <f:if condition="{errors.importFile}">
+                                <f:be.infobox title="Incorrect Value" state="2">{errors.importFile}</f:be.infobox>
+                            </f:if>
+                            <br /><f:form.upload name="importFile" class="form-control-file" /><br />
+                            <small id="importFileHelp" class="form-text text-muted">XLSX File to be imported.</small>
+                        </div>
+                        <div class="form-group">
+                            <f:form.submit value="Importieren" class="btn btn-primary" />
+                        </div>
+                    </f:form>
+                </f:else>
+            </f:if>
+        </div>
+    </div>
+  </div>
+</f:section>
+</html>
