@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <xliff version="1.0">
-	<file source-language="en" datatype="plaintext" original="messages" date="2023-03-23T12:00:00Z" product-name="in2implenianotifications">
+	<file source-language="en" datatype="plaintext" original="messages" date="2023-03-23T12:00:00Z" product-name="luxletter_receiver_import">
 		<header/>
 		<body>
-			<trans-unit id="fe_users.tx_receiver_imported">
+			<trans-unit id="fe_users.tx_receiver_imported" resname="fe_users.tx_receiver_imported">
 				<source>Is Imported</source>
 			</trans-unit>
-			<trans-unit id="fe_groups.tx_receiver_imported">
+			<trans-unit id="fe_groups.tx_receiver_imported" resname="fe_groups.tx_receiver_imported">
 				<source>Is Imported</source>
 			</trans-unit>
 		</body>

@@ -2,7 +2,7 @@
 
 $EM_CONF[$_EXTKEY] = [
     'title' => 'Luxletter Receiver Import',
-    'description' => '',
+    'description' => 'Backend module receiver import form',
     'category' => 'backend',
     'author' => 'Thomas Rawiel',
     'author_email' => 'thomas.rawiel@gmail.com',
