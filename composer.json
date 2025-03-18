@@ -23,5 +23,6 @@
         "typo3/cms": {
             "extension-key": "luxletter_receiver_import"
         }
-    }
+    },
+    "license": "GPL-3.0-or-later"
 }
