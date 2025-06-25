@@ -173,6 +173,7 @@ class ReceiverimportController extends ActionController
                         'fe_user',
                         [
                             'usergroup' => implode(',', $groups),
+                            'tstamp' => $this->getSimAccessTime(),
                         ],
                         [
                             'uid' => $feUser['uid'],
@@ -189,6 +190,8 @@ class ReceiverimportController extends ActionController
                         'password' => $hashedPassword,
                         'usergroup' => $feGroupsUid,
                         'pid' => $importPid,
+                        'tstamp' => $this->getSimAccessTime(),
+                        'crdate' => $this->getSimAccessTime(),
                         'tx_receiver_imported' => 1,
                     ]
                 );
@@ -250,11 +253,21 @@ class ReceiverimportController extends ActionController
                         'title' => $frontendUserGroupTitle,
                         'pid' => $importPid,
                         'luxletter_receiver' => 1,
+                        'tstamp' => $this->getSimAccessTime(),
+                        'crdate' => $this->getSimAccessTime(),
                         'tx_receiver_imported' => 1,
                     ]
                 );
             $feGroupsUid = (int)$connectionFeGroups->lastInsertId('fe_groups');
         }
         return $feGroupsUid;
+    }
+
+    /**
+     * @SuppressWarnings(PHPMD.Superglobals)
+     */
+    protected function getSimAccessTime(): int
+    {
+        return (int)$GLOBALS['SIM_ACCESS_TIME'];
     }
 }
