@@ -170,7 +170,7 @@ class ReceiverimportController extends ActionController
                 $groups[] = $feGroupsUid;
                 $connectionFeUsers
                     ->update(
-                        'fe_user',
+                        'fe_users',
                         [
                             'usergroup' => implode(',', $groups),
                             'tstamp' => $this->getSimAccessTime(),
