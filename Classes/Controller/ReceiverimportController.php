@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace TRAW\LuxletterReceiverImport\Controller;
 
-use Doctrine\DBAL\Exception;
 use Doctrine\DBAL\ParameterType;
 use TRAW\LuxletterReceiverImport\Backend\Buttons\NavigationGroupButton;
 use Psr\Http\Message\ResponseInterface;
@@ -15,8 +14,6 @@ use TYPO3\CMS\Backend\Template\ModuleTemplateFactory;
 use TYPO3\CMS\Core\Crypto\PasswordHashing\PasswordHashFactory;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
-use TYPO3\CMS\Core\Database\Query\Restriction\HiddenRestriction;
-use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Extbase\Mvc\Controller\ActionController;
 
@@ -32,7 +29,6 @@ class ReceiverimportController extends ActionController
 
     public function __construct(
         protected ModuleTemplateFactory $moduleTemplateFactory,
-        protected IconFactory           $iconFactory,
         protected ConnectionPool        $connectionPool,
     )
     {
@@ -105,8 +101,8 @@ class ReceiverimportController extends ActionController
                             continue;
                         }
 
-                        // --- Validate group title ---
-                        if ($title === '') {
+                        $rawGroupTitles = GeneralUtility::trimExplode(',', $title, true);
+                        if ($rawGroupTitles === []) {
                             $rowErrors[] = [
                                 'row' => $rowNumber + 1,
                                 'email' => $email,
@@ -116,20 +112,27 @@ class ReceiverimportController extends ActionController
                             continue;
                         }
 
-                        if (mb_strlen($title) > $maxTitleLength) {
-                            $rowErrors[] = [
-                                'row' => $rowNumber + 1,
-                                'email' => $email,
-                                'error' => 'Group title exceeds max length of ' . $maxTitleLength,
-                            ];
-                            $skippedCount++;
-                            continue;
+                        $groupUids = [];
+                        foreach ($rawGroupTitles as $singleTitle) {
+                            if (mb_strlen($singleTitle) > $maxTitleLength) {
+                                $rowErrors[] = [
+                                    'row' => $rowNumber + 1,
+                                    'email' => $email,
+                                    'error' => 'Group title "' . $singleTitle . '" exceeds max length of ' . $maxTitleLength,
+                                ];
+                                $skippedCount++;
+                                continue 2; // skip entire row
+                            }
+
+                            $groupUids[] = $this->getCachedGroupUid($singleTitle, $importPid);
                         }
+
+                        $groupUids = array_unique($groupUids);
 
                         $feGroupsId = $this->getCachedGroupUid($title, $importPid);
 
                         // --- Subscribe user and get status ---
-                        $status = $this->subscribeFrontendUser($feGroupsId, $importPid, $email);
+                        $status = $this->subscribeFrontendUser($groupUids, $importPid, $email);
 
                         match ($status) {
                             'insert' => $importedCount++,
@@ -216,38 +219,46 @@ class ReceiverimportController extends ActionController
     }
 
     /**
-     * @return void
+     * @param array<int> $feGroupsUids  UIDs of groups that should be assigned
+     * @return string insert|update|skip
      */
-    protected function subscribeFrontendUser(int $feGroupsUid, int $importPid, string $email): string
+    protected function subscribeFrontendUser(array $feGroupsUids, int $importPid, string $email): string
     {
         $connectionFeUsers = $this->connectionPool->getConnectionForTable('fe_users');
 
+        // Get user from cache
         $feUser = $this->existingUsersCache[$email] ?? null;
 
         if ($feUser !== null && ($feUser['uid'] ?? 0) > 0) {
-            // Update usergroup if necessary
-            $groups = array_filter(
+            // Existing user
+            $existingGroups = array_filter(
                 array_map('intval', explode(',', (string)$feUser['usergroup'])),
                 fn($v) => $v > 0
             );
-            if (!in_array($feGroupsUid, $groups, true)) {
-                $groups[] = $feGroupsUid;
 
+            // Merge all new groups
+            $mergedGroups = array_unique(array_merge($existingGroups, $feGroupsUids));
+
+            // Only update if something changed
+            if ($mergedGroups !== $existingGroups) {
                 $connectionFeUsers->update(
                     'fe_users',
                     [
-                        'usergroup' => implode(',', $groups),
+                        'usergroup' => implode(',', $mergedGroups),
                         'tstamp' => $this->getSimAccessTime(),
                     ],
                     ['uid' => $feUser['uid']]
                 );
 
-                // Update cache to reflect change
-                $this->existingUsersCache[$email]['usergroup'] = implode(',', $groups);
+                // Update cache
+                $this->existingUsersCache[$email]['usergroup'] = implode(',', $mergedGroups);
+
                 return 'update';
             }
+
             return 'skip';
         }
+
         // New user
         $hashInstance = GeneralUtility::makeInstance(PasswordHashFactory::class)->getDefaultHashInstance('FE');
         $hashedPassword = $hashInstance->getHashedPassword(
@@ -260,7 +271,7 @@ class ReceiverimportController extends ActionController
                 'username' => $email,
                 'email' => $email,
                 'password' => $hashedPassword,
-                'usergroup' => (string)$feGroupsUid,
+                'usergroup' => implode(',', $feGroupsUids),
                 'pid' => $importPid,
                 'tstamp' => $this->getSimAccessTime(),
                 'crdate' => $this->getSimAccessTime(),
@@ -268,17 +279,15 @@ class ReceiverimportController extends ActionController
             ]
         );
 
-        // Add new user to cache
+        // Add to cache
         $this->existingUsersCache[$email] = [
             'uid' => (int)$connectionFeUsers->lastInsertId('fe_users'),
-            'usergroup' => (string)$feGroupsUid,
+            'usergroup' => implode(',', $feGroupsUids),
             'disable' => 0,
         ];
 
         return 'insert';
-
     }
-
 
     /**
      * @return int
