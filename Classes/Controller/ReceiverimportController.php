@@ -24,6 +24,12 @@ class ReceiverimportController extends ActionController
 {
     protected ModuleTemplate $moduleTemplate;
 
+    /** @var array<string,int> */
+    protected array $groupsCache = []; // key: pid|groupTitle => uid
+
+    /** @var array<string,array{uid:int,usergroup:string,disable:int}> */
+    protected array $existingUsersCache = []; // key: email => user record
+
     public function __construct(
         protected ModuleTemplateFactory $moduleTemplateFactory,
         protected IconFactory           $iconFactory,
@@ -66,6 +72,9 @@ class ReceiverimportController extends ActionController
                     $titleColumn = ((int)$arguments['titleColumn']) - 1;
                     $emailColumn = ((int)$arguments['emailColumn']) - 1;
                     $importPid = (int)$arguments['importPid'];
+
+                    // --- PRELOAD EXISTING USERS ---
+                    $this->preloadExistingUsers($importPid);
 
                     foreach ($xlsx->rows() as $row) {
                         if ($hasTitleRow && $firstRow) {
@@ -143,42 +152,32 @@ class ReceiverimportController extends ActionController
      */
     protected function subscribeFrontendUser(string $frontendUserGroupTitle, int $importPid, string $email): void
     {
-        $feGroupsUid = $this->getGroupsUid($frontendUserGroupTitle, $importPid);
+        $feGroupsUid = $this->getCachedGroupUid($frontendUserGroupTitle, $importPid);
         if ($feGroupsUid <= 0) {
-            return;
+            return; // fail silently if group could not be created
         }
 
         $connectionFeUsers = $this->connectionPool->getConnectionForTable('fe_users');
 
-        $qb = $this->connectionPool->getQueryBuilderForTable('fe_users');
-        $qb->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
+        $feUser = $this->existingUsersCache[$email] ?? null;
 
-        $feUser = $qb
-            ->select('uid', 'usergroup', $GLOBALS['TCA']['fe_users']['ctrl']['enablecolumns']['disabled'] ?? 'disable')
-            ->from('fe_users')
-            ->where(
-                $qb->expr()->eq('email', $qb->createNamedParameter($email, ParameterType::STRING)),
-                $qb->expr()->eq('pid', $qb->createNamedParameter($importPid, ParameterType::INTEGER))
-            )
-            ->setMaxResults(1)
-            ->executeQuery()
-            ->fetchAssociative();
-
-        if ($feUser !== false && ($feUser['uid'] ?? 0) > 0) {
-            // Update User
-            $groups = GeneralUtility::intExplode(',', (string)$feUser['usergroup'], true);
+        if ($feUser !== null && ($feUser['uid'] ?? 0) > 0) {
+            // Update usergroup if necessary
+            $groups = GeneralUtility::intExplode((string)$feUser['usergroup'], ',', true);
             if (!in_array($feGroupsUid, $groups, true)) {
                 $groups[] = $feGroupsUid;
+
                 $connectionFeUsers->update(
                     'fe_users',
                     [
                         'usergroup' => implode(',', $groups),
                         'tstamp' => $this->getSimAccessTime(),
                     ],
-                    [
-                        'uid' => $feUser['uid'],
-                    ]
+                    ['uid' => $feUser['uid']]
                 );
+
+                // Update cache to reflect change
+                $this->existingUsersCache[$email]['usergroup'] = implode(',', $groups);
             }
         } else {
             // New user
@@ -200,6 +199,13 @@ class ReceiverimportController extends ActionController
                     'tx_receiver_imported' => 1,
                 ]
             );
+
+            // Add new user to cache
+            $this->existingUsersCache[$email] = [
+                'uid' => (int)$connectionFeUsers->lastInsertId('fe_users'),
+                'usergroup' => (string)$feGroupsUid,
+                'disable' => 0,
+            ];
         }
     }
 
@@ -244,6 +250,33 @@ class ReceiverimportController extends ActionController
         }
         return $feGroupsUid;
     }
+
+    protected function preloadExistingUsers(int $importPid): void
+    {
+        $qb = $this->connectionPool->getQueryBuilderForTable('fe_users');
+        $qb->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
+
+        $rows = $qb
+            ->select('uid', 'email', 'usergroup', $GLOBALS['TCA']['fe_users']['ctrl']['enablecolumns']['disabled'] ?? 'disable')
+            ->from('fe_users')
+            ->where(
+                $qb->expr()->eq('pid', $qb->createNamedParameter($importPid, ParameterType::INTEGER))
+            )
+            ->executeQuery()
+            ->fetchAllAssociative();
+
+        $this->existingUsersCache = array_column($rows, null, 'email');
+    }
+
+    protected function getCachedGroupUid(string $frontendUserGroupTitle, int $importPid): int
+    {
+        $key = $importPid . '|' . $frontendUserGroupTitle;
+        if (!isset($this->groupsCache[$key])) {
+            $this->groupsCache[$key] = $this->getGroupsUid($frontendUserGroupTitle, $importPid);
+        }
+        return $this->groupsCache[$key];
+    }
+
 
     /**
      * @SuppressWarnings(PHPMD.Superglobals)
