@@ -12,7 +12,7 @@
         <div class="col-xs-12 col-md-6 col-lg-4 col-xl-3">
             <f:if condition="{importAttempted}">
                 <f:then>
-                    <f:be.infobox title="Import Result" state="{importSuccess}">
+                    <f:be.infobox title="Import Result" state="{f:if(condition: importSuccess, then:2, else: 0)}">
                         <p>New users inserted: {importedCount}</p>
                         <p>Existing users updated: {updatedCount}</p>
                         <p>Rows skipped: {skippedCount}</p>
@@ -65,7 +65,7 @@
 
                 <div class="form-group">
                     <div class="form-check">
-                        <f:form.checkbox id="hasTitleRow" class="form-check-input" value="1" name="hasTitleRow" />
+                        <f:form.checkbox id="hasTitleRow" class="form-check-input" value="1" name="hasTitleRow" checked="{data.hasTitleRow}"/>
                         <label class="form-check-label" for="hasTitleRow">
                             Is there a title row which should not be imported?
                         </label>
