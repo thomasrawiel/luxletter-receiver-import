@@ -52,8 +52,16 @@ class ReceiverimportController extends ActionController
     public function indexAction(): ResponseInterface
     {
         $errors = [];
+        $importedCount = 0;
+        $updatedCount = 0;
+        $skippedCount = 0;
+
         $arguments = $this->request->getArguments();
+
+        $importAttempted = false;
         if (array_key_exists('tmp_name', $arguments)) {
+            $importAttempted = true;
+            // Normalize uploaded file
             $importFile = [
                 'name' => $arguments['name'],
                 'type' => $arguments['type'],
@@ -65,41 +73,91 @@ class ReceiverimportController extends ActionController
             $arguments['importFile'] = $importFile;
 
             $errors = $this->checkArguments($arguments);
-            if ($errors === []) {
-                if ($xlsx = SimpleXLSX::parse($arguments['importFile']['tmp_name'])) {
-                    $firstRow = true;
-                    $hasTitleRow = $arguments['hasTitleRow'] ?? false;
-                    $titleColumn = ((int)$arguments['titleColumn']) - 1;
-                    $emailColumn = ((int)$arguments['emailColumn']) - 1;
-                    $importPid = (int)$arguments['importPid'];
 
-                    // --- PRELOAD EXISTING USERS ---
-                    $this->preloadExistingUsers($importPid);
+            if ($errors === [] && $xlsx = SimpleXLSX::parse($arguments['importFile']['tmp_name'])) {
 
-                    foreach ($xlsx->rows() as $row) {
-                        if ($hasTitleRow && $firstRow) {
-                            $firstRow = false;
-                            continue;
-                        }
-                        $title = (string)$row[$titleColumn];
-                        $email = (string)$row[$emailColumn];
+                $firstRow = true;
+                $hasTitleRow = $arguments['hasTitleRow'] ?? false;
+                $titleColumn = ((int)$arguments['titleColumn']) - 1;
+                $emailColumn = ((int)$arguments['emailColumn']) - 1;
+                $importPid = (int)$arguments['importPid'];
 
-                        $this->subscribeFrontendUser($title, $importPid, $email);
-                        $this->moduleTemplate->assign('importSuccess', true);
+                // --- PRELOAD EXISTING USERS ---
+                $this->preloadExistingUsers($importPid);
+
+                $rows = $xlsx->rows();
+                foreach ($rows as $i => $row) {
+                    if ($hasTitleRow && $firstRow) {
+                        $firstRow = false;
+                        continue;
                     }
-                } else {
-                    $errors['importFile'] = SimpleXLSX::parseError();
+
+                    $rowNumber = $i + 1;
+
+                    $title = trim((string)($row[$titleColumn] ?? ''));
+                    $email = trim((string)($row[$emailColumn] ?? ''));
+
+                    // Skip empty email
+                    if ($email === '') {
+                        $errors['rows'][] = ['row' => $rowNumber, 'error' => 'Missing email'];
+                        $skippedCount++;
+                        continue;
+                    }
+
+                    // Validate email
+                    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                        $errors['rows'][] = ['row' => $rowNumber, 'email' => $email, 'error' => 'Invalid email'];
+                        $skippedCount++;
+                        continue;
+                    }
+
+                    // Get cached group UID
+                    $feGroupsUid = $this->getCachedGroupUid($title, $importPid);
+                    if ($feGroupsUid <= 0) {
+                        $errors['rows'][] = ['row' => $rowNumber, 'email' => $email, 'error' => sprintf('Group %s could not be created', $title)];
+                        $skippedCount++;
+                        continue;
+                    }
+
+                    // Subscribe / update user
+                    $status = $this->subscribeFrontendUser($feGroupsUid, $importPid, $email);
+
+                    switch ($status) {
+                        case 'insert':
+                            $importedCount++;
+                            break;
+                        case 'update':
+                            $updatedCount++;
+                            break;
+                        case 'skip':
+                            $skippedCount++;
+                            break;
+                    }
                 }
+
+            } elseif ($errors === []) {
+                $errors['importFile'] = SimpleXLSX::parseError();
             }
+
             $this->moduleTemplate->assign('data', $this->request->getArguments());
         }
-        $this->moduleTemplate->assign('errors', $errors);
+
+        // --- Assign counts and errors ---
+        $this->moduleTemplate->assignMultiple([
+            'importAttempted' => $importAttempted,
+            'importSuccess' => (int)(($importedCount + $updatedCount) > 0 ? 0 : 2),
+            'importedCount' => $importedCount,
+            'updatedCount' => $updatedCount,
+            'skippedCount' => $skippedCount,
+            'errors' => $errors['rows'] ?? [],
+        ]);
 
         $this->addNavigationButtons(['index' => 'Import']);
         $this->addShortcutButton();
 
         return $this->moduleTemplate->renderResponse('Index');
     }
+
 
     private function checkArguments(array $arguments): array
     {
@@ -150,20 +208,18 @@ class ReceiverimportController extends ActionController
     /**
      * @return void
      */
-    protected function subscribeFrontendUser(string $frontendUserGroupTitle, int $importPid, string $email): void
+    protected function subscribeFrontendUser(int $feGroupsUid, int $importPid, string $email): string
     {
-        $feGroupsUid = $this->getCachedGroupUid($frontendUserGroupTitle, $importPid);
-        if ($feGroupsUid <= 0) {
-            return; // fail silently if group could not be created
-        }
-
         $connectionFeUsers = $this->connectionPool->getConnectionForTable('fe_users');
 
         $feUser = $this->existingUsersCache[$email] ?? null;
 
         if ($feUser !== null && ($feUser['uid'] ?? 0) > 0) {
             // Update usergroup if necessary
-            $groups = GeneralUtility::intExplode((string)$feUser['usergroup'], ',', true);
+            $groups = array_filter(
+                array_map('intval', explode(',', (string)$feUser['usergroup'])),
+                fn($v) => $v > 0
+            );
             if (!in_array($feGroupsUid, $groups, true)) {
                 $groups[] = $feGroupsUid;
 
@@ -178,35 +234,39 @@ class ReceiverimportController extends ActionController
 
                 // Update cache to reflect change
                 $this->existingUsersCache[$email]['usergroup'] = implode(',', $groups);
+                return 'update';
             }
-        } else {
-            // New user
-            $hashInstance = GeneralUtility::makeInstance(PasswordHashFactory::class)->getDefaultHashInstance('FE');
-            $hashedPassword = $hashInstance->getHashedPassword(
-                substr(str_shuffle('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?=§%-'), 0, 16)
-            );
-
-            $connectionFeUsers->insert(
-                'fe_users',
-                [
-                    'username' => $email,
-                    'email' => $email,
-                    'password' => $hashedPassword,
-                    'usergroup' => (string)$feGroupsUid,
-                    'pid' => $importPid,
-                    'tstamp' => $this->getSimAccessTime(),
-                    'crdate' => $this->getSimAccessTime(),
-                    'tx_receiver_imported' => 1,
-                ]
-            );
-
-            // Add new user to cache
-            $this->existingUsersCache[$email] = [
-                'uid' => (int)$connectionFeUsers->lastInsertId('fe_users'),
-                'usergroup' => (string)$feGroupsUid,
-                'disable' => 0,
-            ];
+            return 'skip';
         }
+        // New user
+        $hashInstance = GeneralUtility::makeInstance(PasswordHashFactory::class)->getDefaultHashInstance('FE');
+        $hashedPassword = $hashInstance->getHashedPassword(
+            substr(str_shuffle('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?=§%-'), 0, 16)
+        );
+
+        $connectionFeUsers->insert(
+            'fe_users',
+            [
+                'username' => $email,
+                'email' => $email,
+                'password' => $hashedPassword,
+                'usergroup' => (string)$feGroupsUid,
+                'pid' => $importPid,
+                'tstamp' => $this->getSimAccessTime(),
+                'crdate' => $this->getSimAccessTime(),
+                'tx_receiver_imported' => 1,
+            ]
+        );
+
+        // Add new user to cache
+        $this->existingUsersCache[$email] = [
+            'uid' => (int)$connectionFeUsers->lastInsertId('fe_users'),
+            'usergroup' => (string)$feGroupsUid,
+            'disable' => 0,
+        ];
+
+        return 'insert';
+
     }
 
 

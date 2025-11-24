@@ -6,61 +6,96 @@
      pageTitle="Receiver Import"
      includeCssFiles="{0:'EXT:luxletter/Resources/Public/Css/Modules.min.css'}"
   />
+
   <div class="lux-backend module-body">
     <div class="row">
         <div class="col-xs-12 col-md-6 col-lg-4 col-xl-3">
-            <f:if condition="{importSuccess}">
+            <f:if condition="{importAttempted}">
                 <f:then>
-                    <f:be.infobox title="Success" state="0">Your data is successfully imported.</f:be.infobox>
+                    <f:be.infobox title="Import Result" state="{importSuccess}">
+                        <p>New users inserted: {importedCount}</p>
+                        <p>Existing users updated: {updatedCount}</p>
+                        <p>Rows skipped: {skippedCount}</p>
+                    </f:be.infobox>
+
+                    <f:if condition="{errors}">
+                        <f:be.infobox title="Row Errors" state="2">
+                            <table class="table table-striped">
+                                <thead>
+                                <tr>
+                                    <th>Row</th>
+                                    <th>Email</th>
+                                    <th>Error</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                <f:for each="{errors}" as="rowError">
+                                    <tr>
+                                        <td>{rowError.row}</td>
+                                        <td>{rowError.email}</td>
+                                        <td>{rowError.error}</td>
+                                    </tr>
+                                </f:for>
+                                </tbody>
+                            </table>
+                        </f:be.infobox>
+                    </f:if>
                 </f:then>
-                <f:else>
-                    <f:form method="POST" enctype="multipart/form-data">
-                        <div class="form-group">
-                            <label for="titleColumn">Title Column</label>
-                            <f:if condition="{errors.titleColumn}">
-                                <f:be.infobox title="Incorrect Value" state="2">{errors.titleColumn}</f:be.infobox>
-                            </f:if>
-                            <f:form.textfield id="titleColumn" name="titleColumn" class="form-control" required="required" value="{data.titleColumn}"/>
-                            <small id="titleColumnHelp" class="form-text text-muted">In which column is the title of the group? (Number)</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="emailColumn">Email Column</label>
-                            <f:if condition="{errors.emailColumn}">
-                                <f:be.infobox title="Incorrect Value" state="2">{errors.emailColumn}</f:be.infobox>
-                            </f:if>
-                            <f:form.textfield id="emailColumn" name="emailColumn" class="form-control" required="required" value="{data.emailColumn}" />
-                            <small id="emailColumnHelp" class="form-text text-muted">In which column is the email of the group? (Number)</small>
-                        </div>
-                        <div class="form-group">
-                            <div class="form-check">
-                                <f:form.checkbox id="hasTitleRow" class="form-check-input" value="1" name="hasTitleRow" />
-                                <label class="form-check-label" for="hasTitleRow">
-                                    Is there a title row which should not be imported?
-                                </label>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label for="importPid">Import PID</label>
-                            <f:if condition="{errors.emailColumn}">
-                                <f:be.infobox title="Incorrect Value" state="2">{errors.emailColumn}</f:be.infobox>
-                            </f:if>
-                            <f:form.textfield name="importPid" class="form-control" required="required" value="{data.importPid}" />
-                            <small id="importPidHelp" class="form-text text-muted">In which PID should the groups be imported?</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="importFile">Import File</label>
-                            <f:if condition="{errors.importFile}">
-                                <f:be.infobox title="Incorrect Value" state="2">{errors.importFile}</f:be.infobox>
-                            </f:if>
-                            <br /><f:form.upload name="importFile" class="form-control-file" /><br />
-                            <small id="importFileHelp" class="form-text text-muted">XLSX File to be imported.</small>
-                        </div>
-                        <div class="form-group">
-                            <f:form.submit value="Importieren" class="btn btn-primary" />
-                        </div>
-                    </f:form>
-                </f:else>
             </f:if>
+
+            <!-- Import Form (always visible below the results) -->
+            <f:form method="POST" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="titleColumn">Title Column</label>
+                    <f:if condition="{errors.titleColumn}">
+                        <f:be.infobox title="Incorrect Value" state="2">{errors.titleColumn}</f:be.infobox>
+                    </f:if>
+                    <f:form.textfield id="titleColumn" name="titleColumn" class="form-control" required="required" value="{data.titleColumn}"/>
+                    <small id="titleColumnHelp" class="form-text text-muted">In which column is the title of the group? (Number)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="emailColumn">Email Column</label>
+                    <f:if condition="{errors.emailColumn}">
+                        <f:be.infobox title="Incorrect Value" state="2">{errors.emailColumn}</f:be.infobox>
+                    </f:if>
+                    <f:form.textfield id="emailColumn" name="emailColumn" class="form-control" required="required" value="{data.emailColumn}" />
+                    <small id="emailColumnHelp" class="form-text text-muted">In which column is the email of the group? (Number)</small>
+                </div>
+
+                <div class="form-group">
+                    <div class="form-check">
+                        <f:form.checkbox id="hasTitleRow" class="form-check-input" value="1" name="hasTitleRow" />
+                        <label class="form-check-label" for="hasTitleRow">
+                            Is there a title row which should not be imported?
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="importPid">Import PID</label>
+                    <f:if condition="{errors.importPid}">
+                        <f:be.infobox title="Incorrect Value" state="2">{errors.importPid}</f:be.infobox>
+                    </f:if>
+                    <f:form.textfield name="importPid" class="form-control" required="required" value="{data.importPid}" />
+                    <small id="importPidHelp" class="form-text text-muted">In which PID should the groups be imported?</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="importFile">Import File</label>
+                    <f:if condition="{errors.importFile}">
+                        <f:be.infobox title="Incorrect Value" state="2">{errors.importFile}</f:be.infobox>
+                    </f:if>
+                    <br /><f:form.upload name="importFile" class="form-control-file" /><br />
+                    <small id="importFileHelp" class="form-text text-muted">XLSX File to be imported.</small>
+                </div>
+
+                <div class="form-group">
+                    <f:form.submit value="Importieren" class="btn btn-primary" />
+                </div>
+            </f:form>
+
+
         </div>
     </div>
   </div>
