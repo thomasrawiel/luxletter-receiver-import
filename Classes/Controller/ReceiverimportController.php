@@ -145,6 +145,9 @@ class ReceiverimportController extends ActionController
     {
         // Get Group UID
         $feGroupsUid = $this->getGroupsUid($frontendUserGroupTitle, $importPid);
+        if ($feGroupsUid <= 0) {
+            return;
+        }
 
         $qb = $this->connectionPool
             ->getQueryBuilderForTable('fe_users');
