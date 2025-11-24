@@ -153,7 +153,7 @@ class ReceiverimportController extends ActionController
         // Assign template variables
         $this->moduleTemplate->assignMultiple([
             'importAttempted' => $importAttempted,
-            'importSuccess' => ($importedCount + $updatedCount) > 0,
+            'importSuccess' => (int)(($importedCount + $updatedCount) > 0),
             'importedCount' => $importedCount,
             'updatedCount' => $updatedCount,
             'skippedCount' => $skippedCount,
