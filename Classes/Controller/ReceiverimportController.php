@@ -165,7 +165,7 @@ class ReceiverimportController extends ActionController
         $connectionFeUsers = $this->connectionPool->getConnectionForTable('fe_users');
         if ($feUser !== false && ($feUser['uid'] ?? 0) > 0) {
             // Update User
-            $groups = GeneralUtility::intExplode(',', (string)$feUser['usergroup']);
+            $groups = GeneralUtility::intExplode(',', (string)$feUser['usergroup'], true);
             if (!in_array($feGroupsUid, $groups, true)) {
                 $groups[] = $feGroupsUid;
                 $connectionFeUsers
