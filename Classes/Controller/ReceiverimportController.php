@@ -143,66 +143,66 @@ class ReceiverimportController extends ActionController
      */
     protected function subscribeFrontendUser(string $frontendUserGroupTitle, int $importPid, string $email): void
     {
-        // Get Group UID
         $feGroupsUid = $this->getGroupsUid($frontendUserGroupTitle, $importPid);
         if ($feGroupsUid <= 0) {
             return;
         }
 
-        $qb = $this->connectionPool
-            ->getQueryBuilderForTable('fe_users');
-        $qb->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
+        $connectionFeUsers = $this->connectionPool->getConnectionForTable('fe_users');
 
-        $constraints = [
-            $qb->expr()->eq('email', $qb->createNamedParameter($email, ParameterType::STRING)),
-            $qb->expr()->eq('pid', $qb->createNamedParameter($importPid, ParameterType::INTEGER)),
-        ];
+        $qb = $this->connectionPool->getQueryBuilderForTable('fe_users');
+        $qb->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
 
         $feUser = $qb
             ->select('uid', 'usergroup', $GLOBALS['TCA']['fe_users']['ctrl']['enablecolumns']['disabled'] ?? 'disable')
             ->from('fe_users')
-            ->where(...$constraints)
+            ->where(
+                $qb->expr()->eq('email', $qb->createNamedParameter($email, ParameterType::STRING)),
+                $qb->expr()->eq('pid', $qb->createNamedParameter($importPid, ParameterType::INTEGER))
+            )
             ->setMaxResults(1)
             ->executeQuery()
             ->fetchAssociative();
-        $connectionFeUsers = $this->connectionPool->getConnectionForTable('fe_users');
+
         if ($feUser !== false && ($feUser['uid'] ?? 0) > 0) {
             // Update User
             $groups = GeneralUtility::intExplode(',', (string)$feUser['usergroup'], true);
             if (!in_array($feGroupsUid, $groups, true)) {
                 $groups[] = $feGroupsUid;
-                $connectionFeUsers
-                    ->update(
-                        'fe_users',
-                        [
-                            'usergroup' => implode(',', $groups),
-                            'tstamp' => $this->getSimAccessTime(),
-                        ],
-                        [
-                            'uid' => $feUser['uid'],
-                        ]
-                    );
-            }
-        } else {
-            $hashInstance = GeneralUtility::makeInstance(PasswordHashFactory::class)->getDefaultHashInstance('FE');
-            $hashedPassword = $hashInstance->getHashedPassword(substr(str_shuffle('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?=§%-'), 0, 16));
-
-            $connectionFeUsers
-                ->insert(
+                $connectionFeUsers->update(
                     'fe_users',
                     [
-                        'username' => $email,
-                        'email' => $email,
-                        'password' => $hashedPassword,
-                        'usergroup' => $feGroupsUid,
-                        'pid' => $importPid,
+                        'usergroup' => implode(',', $groups),
                         'tstamp' => $this->getSimAccessTime(),
-                        'crdate' => $this->getSimAccessTime(),
-                        'tx_receiver_imported' => 1,
+                    ],
+                    [
+                        'uid' => $feUser['uid'],
                     ]
                 );
+            }
+        } else {
+            // New user
+            $hashInstance = GeneralUtility::makeInstance(PasswordHashFactory::class)->getDefaultHashInstance('FE');
+            $hashedPassword = $hashInstance->getHashedPassword(
+                substr(str_shuffle('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?=§%-'), 0, 16)
+            );
+
+            $connectionFeUsers->insert(
+                'fe_users',
+                [
+                    'username' => $email,
+                    'email' => $email,
+                    'password' => $hashedPassword,
+                    'usergroup' => (string)$feGroupsUid,
+                    'pid' => $importPid,
+                    'tstamp' => $this->getSimAccessTime(),
+                    'crdate' => $this->getSimAccessTime(),
+                    'tx_receiver_imported' => 1,
+                ]
+            );
         }
     }
+
 
     /**
      * @return int
