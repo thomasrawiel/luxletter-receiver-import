@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TRAW\LuxletterReceiverImport\Controller;
 
 use Doctrine\DBAL\Exception;
+use Doctrine\DBAL\ParameterType;
 use TRAW\LuxletterReceiverImport\Backend\Buttons\NavigationGroupButton;
 use Psr\Http\Message\ResponseInterface;
 use Shuchkin\SimpleXLSX;
@@ -13,6 +14,8 @@ use TYPO3\CMS\Backend\Template\ModuleTemplate;
 use TYPO3\CMS\Backend\Template\ModuleTemplateFactory;
 use TYPO3\CMS\Core\Crypto\PasswordHashing\PasswordHashFactory;
 use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
+use TYPO3\CMS\Core\Database\Query\Restriction\HiddenRestriction;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Extbase\Mvc\Controller\ActionController;
@@ -23,8 +26,10 @@ class ReceiverimportController extends ActionController
 
     public function __construct(
         protected ModuleTemplateFactory $moduleTemplateFactory,
-        protected IconFactory $iconFactory
-    ) {
+        protected IconFactory           $iconFactory,
+        protected ConnectionPool        $connectionPool,
+    )
+    {
     }
 
     /** @phpstan-ignore-next-line */
@@ -61,8 +66,6 @@ class ReceiverimportController extends ActionController
                     $titleColumn = ((int)$arguments['titleColumn']) - 1;
                     $emailColumn = ((int)$arguments['emailColumn']) - 1;
                     $importPid = (int)$arguments['importPid'];
-                    $hashInstance = GeneralUtility::makeInstance(PasswordHashFactory::class)->getDefaultHashInstance('FE');
-                    $hashedPassword = $hashInstance->getHashedPassword(substr(str_shuffle('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?=§%-'), 0, 16));
 
                     foreach ($xlsx->rows() as $row) {
                         if ($hasTitleRow && $firstRow) {
@@ -72,10 +75,7 @@ class ReceiverimportController extends ActionController
                         $title = (string)$row[$titleColumn];
                         $email = (string)$row[$emailColumn];
 
-                        // Check if a record is existing and subscribed
-                        if (!$this->checkIfFrontendUserIsExisting($email, $importPid)) {
-                            $this->subscribeFrontendUser($title, $importPid, $email, $hashedPassword);
-                        }
+                        $this->subscribeFrontendUser($title, $importPid, $email);
                         $this->moduleTemplate->assign('importSuccess', true);
                     }
                 } else {
@@ -141,29 +141,29 @@ class ReceiverimportController extends ActionController
     /**
      * @return void
      */
-    protected function subscribeFrontendUser(string $frontendUserGroupTitle, int $importPid, string $email, ?string $hashedPassword): void
+    protected function subscribeFrontendUser(string $frontendUserGroupTitle, int $importPid, string $email): void
     {
         // Get Group UID
         $feGroupsUid = $this->getGroupsUid($frontendUserGroupTitle, $importPid);
 
-        $connectionFeUsers = GeneralUtility::makeInstance(ConnectionPool::class)
-            ->getConnectionForTable('fe_users');
+        $qb = $this->connectionPool
+            ->getQueryBuilderForTable('fe_users');
+        $qb->getRestrictions()->removeAll()->add(GeneralUtility::makeInstance(DeletedRestriction::class));
 
-        $feUser = $connectionFeUsers
-            ->select(
-                ['uid', 'usergroup'],
-                'fe_users',
-                [
-                    'email' => $email,
-                    'pid' => $importPid,
-                    'deleted' => 0,
-                ],
-                [],
-                [],
-                1
-            )->fetchAssociative();
+        $constraints = [
+            $qb->expr()->eq('email', $qb->createNamedParameter($email, ParameterType::STRING)),
+            $qb->expr()->eq('pid', $qb->createNamedParameter($importPid, ParameterType::INTEGER)),
+        ];
 
-        if ($feUser && $feUser['uid'] > 0) {
+        $feUser = $qb
+            ->select('uid', 'usergroup', $GLOBALS['TCA']['fe_users']['ctrl']['enablecolumns']['disabled'] ?? 'disable')
+            ->from('fe_users')
+            ->where(...$constraints)
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchAssociative();
+        $connectionFeUsers = $this->connectionPool->getConnectionForTable('fe_users');
+        if ($feUser !== false && ($feUser['uid'] ?? 0) > 0) {
             // Update User
             $groups = GeneralUtility::intExplode(',', (string)$feUser['usergroup']);
             if (!in_array($feGroupsUid, $groups, true)) {
@@ -181,6 +181,9 @@ class ReceiverimportController extends ActionController
                     );
             }
         } else {
+            $hashInstance = GeneralUtility::makeInstance(PasswordHashFactory::class)->getDefaultHashInstance('FE');
+            $hashedPassword = $hashInstance->getHashedPassword(substr(str_shuffle('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?=§%-'), 0, 16));
+
             $connectionFeUsers
                 ->insert(
                     'fe_users',
@@ -196,30 +199,6 @@ class ReceiverimportController extends ActionController
                     ]
                 );
         }
-    }
-
-    /**
-     * @return bool
-     * @throws Exception
-     */
-    protected function checkIfFrontendUserIsExisting(string $email, int $importPid): bool
-    {
-        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)
-            ->getQueryBuilderForTable('fe_users');
-        $queryBuilder
-            ->select('u.uid')
-            ->from('fe_users', 'u')
-            ->join(
-                'u',
-                'fe_groups',
-                'g',
-                $queryBuilder->expr()->eq('u.usergroup', $queryBuilder->quoteIdentifier('g.uid'))
-            )
-            ->where($queryBuilder->expr()->eq('u.email', $queryBuilder->createNamedParameter($email)))
-            ->andWhere($queryBuilder->expr()->eq('u.pid', $importPid))
-            ->andWhere($queryBuilder->expr()->eq('u.deleted', 0))
-            ->setMaxResults(1);
-        return ((int)$queryBuilder->executeQuery()->fetchOne()) > 0;
     }
 
     /**
