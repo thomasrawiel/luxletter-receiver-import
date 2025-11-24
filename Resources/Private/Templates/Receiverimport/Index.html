@@ -18,7 +18,7 @@
                         <p>Rows skipped: {skippedCount}</p>
                     </f:be.infobox>
 
-                    <f:if condition="{errors}">
+                    <f:if condition="{rowErrors}">
                         <f:be.infobox title="Row Errors" state="2">
                             <table class="table table-striped">
                                 <thead>
@@ -29,7 +29,7 @@
                                 </tr>
                                 </thead>
                                 <tbody>
-                                <f:for each="{errors}" as="rowError">
+                                <f:for each="{rowErrors}" as="rowError">
                                     <tr>
                                         <td>{rowError.row}</td>
                                         <td>{rowError.email}</td>

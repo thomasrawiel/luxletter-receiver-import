@@ -51,17 +51,14 @@ class ReceiverimportController extends ActionController
 
     public function indexAction(): ResponseInterface
     {
-        $errors = [];
         $importedCount = 0;
         $updatedCount = 0;
         $skippedCount = 0;
+        $rowErrors = [];
+        $importAttempted = false;
 
         $arguments = $this->request->getArguments();
-
-        $importAttempted = false;
         if (array_key_exists('tmp_name', $arguments)) {
-            $importAttempted = true;
-            // Normalize uploaded file
             $importFile = [
                 'name' => $arguments['name'],
                 'type' => $arguments['type'],
@@ -72,84 +69,96 @@ class ReceiverimportController extends ActionController
             unset($arguments['name'], $arguments['type'], $arguments['size'], $arguments['tmp_name'], $arguments['error']);
             $arguments['importFile'] = $importFile;
 
+            // Check form arguments
             $errors = $this->checkArguments($arguments);
-
-            if ($errors === [] && $xlsx = SimpleXLSX::parse($arguments['importFile']['tmp_name'])) {
-
+            if ($errors === []) {
+                $importAttempted = true;
+                $importPid = (int)$arguments['importPid'];
                 $firstRow = true;
                 $hasTitleRow = $arguments['hasTitleRow'] ?? false;
                 $titleColumn = ((int)$arguments['titleColumn']) - 1;
                 $emailColumn = ((int)$arguments['emailColumn']) - 1;
-                $importPid = (int)$arguments['importPid'];
 
-                // --- PRELOAD EXISTING USERS ---
+                $maxTitleLength = (int)($GLOBALS['TCA']['fe_groups']['columns']['title']['config']['max'] ?? 255);
+
+                // Preload existing users for this PID
                 $this->preloadExistingUsers($importPid);
 
-                $rows = $xlsx->rows();
-                foreach ($rows as $i => $row) {
-                    if ($hasTitleRow && $firstRow) {
-                        $firstRow = false;
-                        continue;
-                    }
+                if ($xlsx = \Shuchkin\SimpleXLSX::parse($arguments['importFile']['tmp_name'])) {
+                    foreach ($xlsx->rows() as $rowNumber => $row) {
+                        if ($hasTitleRow && $firstRow) {
+                            $firstRow = false;
+                            continue;
+                        }
 
-                    $rowNumber = $i + 1;
+                        $title = trim((string)($row[$titleColumn] ?? ''));
+                        $email = trim((string)($row[$emailColumn] ?? ''));
 
-                    $title = trim((string)($row[$titleColumn] ?? ''));
-                    $email = trim((string)($row[$emailColumn] ?? ''));
-
-                    // Skip empty email
-                    if ($email === '') {
-                        $errors['rows'][] = ['row' => $rowNumber, 'error' => 'Missing email'];
-                        $skippedCount++;
-                        continue;
-                    }
-
-                    // Validate email
-                    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                        $errors['rows'][] = ['row' => $rowNumber, 'email' => $email, 'error' => 'Invalid email'];
-                        $skippedCount++;
-                        continue;
-                    }
-
-                    // Get cached group UID
-                    $feGroupsUid = $this->getCachedGroupUid($title, $importPid);
-                    if ($feGroupsUid <= 0) {
-                        $errors['rows'][] = ['row' => $rowNumber, 'email' => $email, 'error' => sprintf('Group %s could not be created', $title)];
-                        $skippedCount++;
-                        continue;
-                    }
-
-                    // Subscribe / update user
-                    $status = $this->subscribeFrontendUser($feGroupsUid, $importPid, $email);
-
-                    switch ($status) {
-                        case 'insert':
-                            $importedCount++;
-                            break;
-                        case 'update':
-                            $updatedCount++;
-                            break;
-                        case 'skip':
+                        // --- Validate email ---
+                        if (!GeneralUtility::validEmail($email)) {
+                            $rowErrors[] = [
+                                'row' => $rowNumber + 1,
+                                'email' => $email,
+                                'error' => 'Invalid email format',
+                            ];
                             $skippedCount++;
-                            break;
+                            continue;
+                        }
+
+                        // --- Validate group title ---
+                        if ($title === '') {
+                            $rowErrors[] = [
+                                'row' => $rowNumber + 1,
+                                'email' => $email,
+                                'error' => 'Group title is empty',
+                            ];
+                            $skippedCount++;
+                            continue;
+                        }
+
+                        if (mb_strlen($title) > $maxTitleLength) {
+                            $rowErrors[] = [
+                                'row' => $rowNumber + 1,
+                                'email' => $email,
+                                'error' => 'Group title exceeds max length of ' . $maxTitleLength,
+                            ];
+                            $skippedCount++;
+                            continue;
+                        }
+
+                        $feGroupsId = $this->getCachedGroupUid($title, $importPid);
+
+                        // --- Subscribe user and get status ---
+                        $status = $this->subscribeFrontendUser($feGroupsId, $importPid, $email);
+
+                        match ($status) {
+                            'insert' => $importedCount++,
+                            'update' => $updatedCount++,
+                            default => $skippedCount++,
+                        };
                     }
+                } else {
+                    $rowErrors[] = [
+                        'row' => 0,
+                        'email' => '',
+                        'error' => 'Failed to parse XLSX: ' . \Shuchkin\SimpleXLSX::parseError(),
+                    ];
                 }
-
-            } elseif ($errors === []) {
-                $errors['importFile'] = SimpleXLSX::parseError();
             }
-
-            $this->moduleTemplate->assign('data', $this->request->getArguments());
+            $this->moduleTemplate->assign('data', $arguments);
+        } else {
+            $errors = [];
         }
 
-        // --- Assign counts and errors ---
+        // Assign template variables
         $this->moduleTemplate->assignMultiple([
             'importAttempted' => $importAttempted,
-            'importSuccess' => (int)(($importedCount + $updatedCount) > 0 ? 0 : 2),
+            'importSuccess' => ($importedCount + $updatedCount) > 0,
             'importedCount' => $importedCount,
             'updatedCount' => $updatedCount,
             'skippedCount' => $skippedCount,
-            'errors' => $errors['rows'] ?? [],
+            'rowErrors' => $rowErrors,
+            'errors' => $errors,
         ]);
 
         $this->addNavigationButtons(['index' => 'Import']);
@@ -157,6 +166,7 @@ class ReceiverimportController extends ActionController
 
         return $this->moduleTemplate->renderResponse('Index');
     }
+
 
 
     private function checkArguments(array $arguments): array
