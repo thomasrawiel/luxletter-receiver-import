@@ -24,6 +24,9 @@ use TYPO3\CMS\Extbase\Mvc\Controller\ActionController;
 
 class ReceiverimportController extends ActionController
 {
+    /**
+     * @var ModuleTemplate
+     */
     protected ModuleTemplate $moduleTemplate;
 
     /** @var array<string,int> */
@@ -34,8 +37,15 @@ class ReceiverimportController extends ActionController
 
     /** @var int Batch size for inserts */
     protected int $batchSize = 100;
+    /**
+     * @var array
+     */
     protected array $batchInsert = []; // email => ['email' => ..., 'groups' => [...], 'pid' => ...]
 
+    /**
+     * @param ModuleTemplateFactory $moduleTemplateFactory
+     * @param ConnectionPool        $connectionPool
+     */
     public function __construct(
         protected ModuleTemplateFactory $moduleTemplateFactory,
         protected ConnectionPool        $connectionPool
@@ -49,12 +59,27 @@ class ReceiverimportController extends ActionController
         $this->view->assignMultiple(['view' => ['controller' => 'receiverImport', 'action' => 'index']]);
     }
 
+    /**
+     * @return void
+     */
     protected function initializeAction(): void
     {
         $this->moduleTemplate = $this->moduleTemplateFactory->create($this->request);
         $this->moduleTemplate->setUiBlock(false);
     }
 
+    /**
+     * Main import action for the module.
+     *
+     * Parses the uploaded XLSX file and imports frontend users.
+     * - Validates email and group titles
+     * - Updates existing users
+     * - Queues new users for batch insert
+     * - Tracks success, skipped, and error counts
+     *
+     * @return ResponseInterface
+     * @SuppressWarnings(PHPMD.Superglobals)
+     */
     public function indexAction(): ResponseInterface
     {
         $importedCount = 0;
@@ -132,7 +157,7 @@ class ReceiverimportController extends ActionController
                             $status = $this->subscribeFrontendUser($groupUids, $importPid, $email);
                             match ($status) {
                                 'update' => $updatedCount++,
-                                'skip'   => $skippedValidCount++, // <-- instead of incrementing $skippedCount
+                                'skip' => $skippedValidCount++, // <-- instead of incrementing $skippedCount
                             };
                             continue;
                         }
@@ -178,7 +203,7 @@ class ReceiverimportController extends ActionController
 
         $this->moduleTemplate->assignMultiple([
             'importAttempted' => $importAttempted,
-            'importSuccess' => ($importedCount + $updatedCount) > 0,
+            'importSuccess' => $this->fetchSuccessState($importedCount, $updatedCount, $skippedCount, count($errors) + count($rowErrors)),
             'importedCount' => $importedCount,
             'updatedCount' => $updatedCount,
             'skippedCount' => $skippedCount,
@@ -192,30 +217,49 @@ class ReceiverimportController extends ActionController
         return $this->moduleTemplate->renderResponse('Index');
     }
 
-
     /**
-     * Flushes queued batch insert/update.
+     * Determines the TYPO3 InfoboxViewHelper state for import result.
      *
-     * @param array<string,array{email:string,pid:int,groups:array<int>,row:int}> $batchInsert
+     * Returns one of:
+     * - STATE_OK (0) – successful import/update
+     * - STATE_WARNING (1) – skipped rows or partial errors
+     * - STATE_ERROR (2) – errors with no successful imports
+     * - STATE_INFO (-1) – nothing happened
+     *
+     * @param int $importedCount Number of successfully imported new users
+     * @param int $updatedCount  Number of successfully updated existing users
+     * @param int $skippedCount  Number of skipped rows
+     * @param int $errorCount    Number of errors
+     *
+     * @return int InfoboxViewHelper state constant
      */
-    protected function flushBatchInsert(array $batchInsert, int &$importedCount, int &$updatedCount, array &$rowErrors): int
+    private function fetchSuccessState(int $importedCount, int $updatedCount, int $skippedCount, int $errorCount): int
     {
-        $connectionFeUsers = $this->connectionPool->getConnectionForTable('fe_users');
-        $insertedThisBatch = 0;
+        $successCount = $importedCount + $updatedCount;
 
-        foreach ($batchInsert as $email => $data) {
-            $status = $this->subscribeFrontendUser($data['groups'], $data['pid'], $email);
-            if ($status === 'insert') {
-                $insertedThisBatch++;
-                $importedCount++;
-            } elseif ($status === 'update') {
-                $updatedCount++;
-            }
+        if ($errorCount > 0) {
+            return $successCount > 0 ? \TYPO3\CMS\Fluid\ViewHelpers\Be\InfoboxViewHelper::STATE_WARNING
+                : \TYPO3\CMS\Fluid\ViewHelpers\Be\InfoboxViewHelper::STATE_ERROR;
         }
 
-        return $insertedThisBatch;
+        if ($skippedCount > 0) {
+            return \TYPO3\CMS\Fluid\ViewHelpers\Be\InfoboxViewHelper::STATE_WARNING;
+        }
+
+        if ($successCount > 0) {
+            return \TYPO3\CMS\Fluid\ViewHelpers\Be\InfoboxViewHelper::STATE_OK;
+        }
+
+        return \TYPO3\CMS\Fluid\ViewHelpers\Be\InfoboxViewHelper::STATE_INFO;
     }
 
+    /**
+     * Validates required import arguments.
+     *
+     * @param array $arguments Module form input arguments
+     *
+     * @return array<string,string> Array of errors keyed by argument name
+     */
     private function checkArguments(array $arguments): array
     {
         $errors = [];
@@ -239,6 +283,11 @@ class ReceiverimportController extends ActionController
         return $errors;
     }
 
+    /**
+     * Adds a navigation group button to the module button bar.
+     *
+     * @param array<string,mixed> $configuration
+     */
     protected function addNavigationButtons(array $configuration): void
     {
         $buttonBar = $this->moduleTemplate->getDocHeaderComponent()->getButtonBar();
@@ -251,6 +300,9 @@ class ReceiverimportController extends ActionController
         $buttonBar->addButton($navigationGroupButton, ButtonBar::BUTTON_POSITION_LEFT, 2);
     }
 
+    /**
+     * Adds a shortcut button for this module to the TYPO3 backend.
+     */
     protected function addShortcutButton(): void
     {
         $buttonBar = $this->moduleTemplate->getDocHeaderComponent()->getButtonBar();
@@ -263,14 +315,14 @@ class ReceiverimportController extends ActionController
     }
 
     /**
-     * Subscribe a frontend user.
+     * Subscribe or update a frontend user.
      *
-     * - New users are queued for batch insert.
-     * - Existing users are updated immediately if new groups are added.
+     * - If user exists, merge FE groups and update only if groups changed.
+     * - New users are queued for batch insert (handled elsewhere)
      *
-     * @param array<int> $feGroupsUids UIDs of groups that should be assigned
-     * @param int        $importPid
-     * @param string     $email
+     * @param array<int> $feGroupsUids Array of group UIDs to assign
+     * @param int        $importPid    Page ID where user belongs
+     * @param string     $email        Email of the frontend user
      *
      * @return string 'insert' | 'update' | 'skip'
      */
@@ -311,7 +363,16 @@ class ReceiverimportController extends ActionController
         return 'insert';
     }
 
-
+    /**
+     * Executes batch insert for new users in $this->batchInsert.
+     *
+     * - Generates passwords for new users
+     * - Fires BulkInsertPrepareEvent for extensibility
+     * - Validates column/value/type count
+     * - Updates $this->existingUsersCache with inserted users
+     *
+     * @throws \InvalidArgumentException If columns/types/values mismatch
+     */
     protected function flushBatch(): void
     {
         if (empty($this->batchInsert)) {
@@ -421,7 +482,14 @@ class ReceiverimportController extends ActionController
 
 
     /**
-     * @return int
+     * Returns the UID of a frontend user group.
+     *
+     * - Creates the group if it does not exist
+     *
+     * @param string $frontendUserGroupTitle
+     * @param int    $importPid
+     *
+     * @return int UID of the group
      */
     protected function getGroupsUid(string $frontendUserGroupTitle, int $importPid): int
     {
@@ -461,6 +529,12 @@ class ReceiverimportController extends ActionController
         return $feGroupsUid;
     }
 
+    /**
+     * Preloads existing frontend users into $this->existingUsersCache.
+     *
+     * @param int $importPid
+     * @SuppressWarnings(PHPMD.Superglobals)
+     */
     protected function preloadExistingUsers(int $importPid): void
     {
         $qb = $this->connectionPool->getQueryBuilderForTable('fe_users');
@@ -478,6 +552,14 @@ class ReceiverimportController extends ActionController
         $this->existingUsersCache = array_column($rows, null, 'email');
     }
 
+    /**
+     * Returns cached group UID, creating the group if necessary.
+     *
+     * @param string $frontendUserGroupTitle
+     * @param int    $importPid
+     *
+     * @return int Group UID
+     */
     protected function getCachedGroupUid(string $frontendUserGroupTitle, int $importPid): int
     {
         $key = $importPid . '|' . $frontendUserGroupTitle;
@@ -489,6 +571,10 @@ class ReceiverimportController extends ActionController
 
 
     /**
+     *
+     *  Returns the current simulated access time.
+     *
+     * @return int UNIX timestamp
      * @SuppressWarnings(PHPMD.Superglobals)
      */
     protected function getSimAccessTime(): int
