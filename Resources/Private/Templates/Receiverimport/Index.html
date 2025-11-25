@@ -16,7 +16,29 @@
                         <p>New users inserted: {importedCount}</p>
                         <p>Existing users updated: {updatedCount}</p>
                         <p>Rows skipped: {skippedCount}</p>
+                        <p>Rows with errors: {rowErrors -> f:count()}</p>
                     </f:be.infobox>
+
+                    <f:if condition="{batchResults}">
+                        <f:be.infobox title="Batch Insert Summary" state="1">
+                            <table class="table table-striped">
+                                <thead>
+                                <tr>
+                                    <th>Batch #</th>
+                                    <th>Users inserted</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                <f:for each="{batchResults}" as="batch">
+                                    <tr>
+                                        <td>{batch.batch}</td>
+                                        <td>{batch.inserted}</td>
+                                    </tr>
+                                </f:for>
+                                </tbody>
+                            </table>
+                        </f:be.infobox>
+                    </f:if>
 
                     <f:if condition="{rowErrors}">
                         <f:be.infobox title="Row Errors" state="2">
@@ -43,8 +65,9 @@
                 </f:then>
             </f:if>
 
+
             <!-- Import Form (always visible below the results) -->
-            <f:form method="POST" enctype="multipart/form-data">
+            <f:form method="POST" enctype="multipart/form-data" id="receiver-import-form">
                 <div class="form-group">
                     <label for="titleColumn">Title Column</label>
                     <f:if condition="{errors.titleColumn}">
@@ -95,7 +118,22 @@
                 </div>
             </f:form>
 
-
+<div class="module-body t3js-module-body" id="ui-block" style="display:none;">
+    <div id="t3js-ui-block" class="ui-block">
+        <core:icon identifier="spinner-circle" size="large" />
+        <h2 id="t3js-ui-block-detail">Importing users, please wait...</h2>
+        <small>This may take a few minutes, depending on the number of rows. Don't refresh the frame</small>
+    </div>
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const form = document.getElementById('receiver-import-form');
+        const uiblock = document.getElementById('ui-block');
+        form.addEventListener('submit', (event) => {
+            uiblock.style.display = 'block';
+        });
+    });
+</script>
         </div>
     </div>
   </div>
