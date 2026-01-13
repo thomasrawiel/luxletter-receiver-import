@@ -10,7 +10,7 @@
     ],
     "require": {
         "typo3/cms-core": "^12.4",
-        "in2code/luxletter": "^26 || ^27 || dev-master",
+        "in2code/luxletter": "^26 || ^27 || ^28 || dev-master",
         "shuchkin/simplexlsx": "^1.0"
     },
     "autoload": {
